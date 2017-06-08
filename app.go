@@ -22,10 +22,7 @@ package fx
 
 import (
 	"context"
-	"os"
-	"os/signal"
 	"reflect"
-	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
@@ -39,6 +36,7 @@ import (
 type App struct {
 	container *dig.Container
 	lifecycle *lifecycle
+	stopper   *stopper
 	logger    fxlog.Logger
 }
 
@@ -49,14 +47,19 @@ func New(constructors ...interface{}) *App {
 
 	container := dig.New()
 	lifecycle := newLifecycle(logger)
+	stopper := newStopper()
 
 	app := &App{
 		container: container,
 		lifecycle: lifecycle,
+		stopper:   stopper,
 		logger:    logger,
 	}
 	app.Provide(func() Lifecycle {
 		return lifecycle
+	})
+	app.Provide(func() Stopper {
+		return stopper
 	})
 	app.Provide(constructors...)
 
@@ -125,6 +128,10 @@ func (s *App) start(funcs ...interface{}) error {
 		return err
 	}
 
+	if err := s.stopper.start(); err != nil {
+		return err
+	}
+
 	s.logger.Printf("RUNNING")
 
 	return nil
@@ -132,7 +139,17 @@ func (s *App) start(funcs ...interface{}) error {
 
 // Stop the app
 func (s *App) Stop(ctx context.Context) error {
-	return withTimeout(ctx, s.lifecycle.stop)
+	return withTimeout(ctx, s.stop)
+}
+
+func (s *App) stop() error {
+	if err := s.stopper.stop(); err != nil {
+		return err
+	}
+	if err := s.lifecycle.stop(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // RunForever starts the app, blocks for SIGINT or SIGTERM, then gracefully stops
@@ -145,10 +162,8 @@ func (s *App) RunForever(funcs ...interface{}) {
 		s.logger.Fatalf("ERROR\t\tFailed to start: %v", err)
 	}
 
-	// block on SIGINT and SIGTERM
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	fxlog.PrintSignal(s.logger, <-c)
+	c := s.stopper.stopped()
+	s.logger.Printf("Stopping because: %s\n", <-c)
 
 	// gracefully shutdown the app
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), DefaultStopTimeout)
