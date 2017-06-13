@@ -68,7 +68,7 @@ var (
 	DefaultStartTimeout = 15 * time.Second
 
 	// DefaultStopTimeout will be used to stop app in RunForever
-	DefaultStopTimeout = 5 * time.Second
+	DefaultStopTimeout = 15 * time.Second
 )
 
 // Provide constructors into the D.I. Container, their types will be available
